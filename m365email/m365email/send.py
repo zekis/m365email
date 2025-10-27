@@ -22,7 +22,7 @@ def get_sending_account_for_sender(sender_email):
 		sender_email: Email address of the sender
 
 	Returns:
-		M365EmailAccount: The account to use for sending, or None
+		tuple: (M365EmailAccount, is_matched) where is_matched=True if sender matched an account
 	"""
 	from email.utils import parseaddr
 
@@ -39,7 +39,7 @@ def get_sending_account_for_sender(sender_email):
 
 		if account_name:
 			print(f"M365 Email: Found matching account for sender {sender_email}")
-			return frappe.get_doc("M365 Email Account", account_name)
+			return frappe.get_doc("M365 Email Account", account_name), True
 
 	# Fall back to default outgoing account
 	account_name = frappe.db.get_value(
@@ -49,9 +49,9 @@ def get_sending_account_for_sender(sender_email):
 
 	if account_name:
 		print(f"M365 Email: Using default outgoing account (sender {sender_email} didn't match any account)")
-		return frappe.get_doc("M365 Email Account", account_name)
+		return frappe.get_doc("M365 Email Account", account_name), False
 
-	return None
+	return None, False
 
 
 def can_send_via_m365():
@@ -82,7 +82,7 @@ def intercept_email_queue(doc, method=None):
 	sender_email = getattr(doc, 'sender', None) or frappe.session.user
 
 	# Find the appropriate M365 account for this sender
-	sending_account = get_sending_account_for_sender(sender_email)
+	sending_account, is_matched = get_sending_account_for_sender(sender_email)
 
 	if not sending_account:
 		# No M365 sending configured, use default SMTP
@@ -244,8 +244,11 @@ def send_via_m365(email_queue_doc):
 		if sender_email:
 			sender_name, sender_email = parseaddr(sender_email)
 
-		# Check if we should always use the account email as sender
-		if sending_account.always_use_account_email_as_sender:
+		# Check if this account was matched or is the default fallback
+		# If sender doesn't match the account email, we're using default fallback
+		# In that case, override sender to the account's email
+		if sender_email != sending_account.email_address:
+			print(f"M365 Email: Overriding sender from {sender_email} to {sending_account.email_address} (using default account)")
 			sender_email = sending_account.email_address
 
 		# Validate sender email

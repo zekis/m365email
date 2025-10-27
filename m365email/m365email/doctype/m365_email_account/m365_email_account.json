@@ -15,7 +15,6 @@
   "enable_incoming",
   "enable_outgoing",
   "default_outgoing",
-  "always_use_account_email_as_sender",
   "footer",
   "column_break_1",
   "sync_from_date",
@@ -84,18 +83,10 @@
   {
    "default": "0",
    "depends_on": "enable_outgoing",
-   "description": "Use this account as the default fallback when sender email doesn't match any M365 account",
+   "description": "Use this account as the default fallback when sender email doesn't match any M365 account. When used as fallback, emails will be sent as this account's email address.",
    "fieldname": "default_outgoing",
    "fieldtype": "Check",
    "label": "Default Outgoing Account"
-  },
-  {
-   "default": "0",
-   "depends_on": "enable_outgoing",
-   "description": "Always send emails using this account's email address, regardless of the sender specified",
-   "fieldname": "always_use_account_email_as_sender",
-   "fieldtype": "Check",
-   "label": "Always Use Account Email as Sender"
   },
   {
    "depends_on": "enable_outgoing",
