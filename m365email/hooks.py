@@ -83,7 +83,7 @@ app_license = "mit"
 # ------------
 
 # before_install = "m365email.install.before_install"
-# after_install = "m365email.install.after_install"
+after_install = "m365email.m365email.custom_fields.create_m365_custom_fields"
 
 # Uninstallation
 # ------------
@@ -121,9 +121,9 @@ app_license = "mit"
 # 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
 # }
 #
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+has_permission = {
+	"M365 Email Account": "m365email.m365email.doctype.m365_email_account.m365_email_account.has_permission",
+}
 
 # DocType Class
 # ---------------
@@ -137,34 +137,33 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Email Queue": {
+		"before_insert": "m365email.m365email.send.intercept_email_queue"
+	}
+}
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"m365email.tasks.all"
-# 	],
-# 	"daily": [
-# 		"m365email.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"m365email.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"m365email.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"m365email.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"*/5 * * * *": [
+			"m365email.m365email.tasks.sync_all_email_accounts"
+		],
+		"* * * * *": [
+			# Process M365 email queue every minute
+			"m365email.m365email.send.process_email_queue_m365"
+		]
+	},
+	"hourly": [
+		"m365email.m365email.tasks.refresh_all_tokens"
+	],
+	"daily": [
+		"m365email.m365email.tasks.cleanup_old_logs",
+		"m365email.m365email.tasks.validate_service_principals"
+	]
+}
 
 # Testing
 # -------
@@ -174,9 +173,10 @@ app_license = "mit"
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "m365email.event.get_events"
-# }
+# Override Frappe's core email sending to support M365
+override_whitelisted_methods = {
+	"frappe.core.doctype.communication.email.make": "m365email.m365email.email_override.make"
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
