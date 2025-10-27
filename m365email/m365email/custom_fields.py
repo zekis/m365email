@@ -19,6 +19,7 @@ def create_m365_custom_fields():
 				"fieldname": "m365_message_id",
 				"label": "M365 Message ID",
 				"fieldtype": "Data",
+				"length": 500,
 				"insert_after": "uid",
 				"read_only": 1,
 				"no_copy": 1,
