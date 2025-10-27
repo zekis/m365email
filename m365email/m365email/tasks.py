@@ -13,23 +13,23 @@ from m365email.m365email.auth import refresh_token, test_connection
 
 def sync_all_email_accounts():
 	"""
-	Sync all enabled email accounts
+	Sync all email accounts with incoming enabled
 	Scheduled to run every 5 minutes
 	"""
-	print("M365 Email: Starting scheduled sync for all enabled accounts")
+	print("M365 Email: Starting scheduled sync for all accounts with incoming enabled")
 
-	# Get all enabled email accounts
+	# Get all accounts with incoming enabled
 	accounts = frappe.get_all(
 		"M365 Email Account",
-		filters={"enabled": 1},
+		filters={"enable_incoming": 1},
 		fields=["name", "account_name", "email_address", "account_type"]
 	)
 
 	if not accounts:
-		print("M365 Email: No enabled accounts found")
+		print("M365 Email: No accounts with incoming enabled found")
 		return
 
-	print(f"M365 Email: Found {len(accounts)} enabled account(s)")
+	print(f"M365 Email: Found {len(accounts)} account(s) with incoming enabled")
 
 	success_count = 0
 	failed_count = 0

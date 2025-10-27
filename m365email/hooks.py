@@ -191,8 +191,12 @@ override_whitelisted_methods = {
 
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
+# Allow deleting M365 Email Accounts even if they have:
+# - Sync logs (historical data)
+# - Sent emails in Email Queue
+# - Synced emails in Communication
 
-# ignore_links_on_delete = ["Communication", "ToDo"]
+ignore_links_on_delete = ["M365 Email Sync Log", "Email Queue", "Communication"]
 
 # Request Events
 # ----------------

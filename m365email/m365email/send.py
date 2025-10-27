@@ -13,54 +13,85 @@ from m365email.m365email.auth import get_access_token
 from m365email.m365email.graph_api import send_email_as_user
 
 
-def get_sending_account():
+def get_sending_account_for_sender(sender_email):
 	"""
-	Get the M365 Email Account marked for sending
-	
+	Get the M365 Email Account for a specific sender email
+	First tries to match sender email, then falls back to default outgoing account
+
+	Args:
+		sender_email: Email address of the sender
+
 	Returns:
 		M365EmailAccount: The account to use for sending, or None
 	"""
+	from email.utils import parseaddr
+
+	# Parse email address from "Name <email>" format
+	if sender_email:
+		_, sender_email = parseaddr(sender_email)
+
+	# First, try to find an account matching the sender email
+	if sender_email and '@' in sender_email:
+		account_name = frappe.db.get_value(
+			"M365 Email Account",
+			{"email_address": sender_email, "enable_outgoing": 1}
+		)
+
+		if account_name:
+			print(f"M365 Email: Found matching account for sender {sender_email}")
+			return frappe.get_doc("M365 Email Account", account_name)
+
+	# Fall back to default outgoing account
 	account_name = frappe.db.get_value(
 		"M365 Email Account",
-		{"use_for_sending": 1, "enabled": 1}
+		{"default_outgoing": 1, "enable_outgoing": 1}
 	)
-	
-	if not account_name:
-		return None
-	
-	return frappe.get_doc("M365 Email Account", account_name)
+
+	if account_name:
+		print(f"M365 Email: Using default outgoing account (sender {sender_email} didn't match any account)")
+		return frappe.get_doc("M365 Email Account", account_name)
+
+	return None
 
 
 def can_send_via_m365():
 	"""
 	Check if M365 sending is available
-	
+
 	Returns:
-		bool: True if M365 sending is configured
+		bool: True if M365 sending is configured (has default outgoing account)
 	"""
-	return get_sending_account() is not None
+	account_name = frappe.db.get_value(
+		"M365 Email Account",
+		{"default_outgoing": 1, "enable_outgoing": 1}
+	)
+	return account_name is not None
 
 
 def intercept_email_queue(doc, method=None):
 	"""
 	Hook: Email Queue before_insert
 	Check if we should send via M365 instead of SMTP
-	
+	Automatically matches sender email to M365 account or uses default
+
 	Args:
 		doc: Email Queue document
 		method: Hook method name (unused)
 	"""
-	# Check if M365 sending is available
-	sending_account = get_sending_account()
-	
+	# Get sender email from Email Queue
+	sender_email = getattr(doc, 'sender', None) or frappe.session.user
+
+	# Find the appropriate M365 account for this sender
+	sending_account = get_sending_account_for_sender(sender_email)
+
 	if not sending_account:
 		# No M365 sending configured, use default SMTP
 		return
-	
+
 	# Mark this email for M365 sending
 	doc.m365_send = 1
 	doc.m365_account = sending_account.name
-	
+
 	print(f"M365 Email: Marked email '{doc.name}' for M365 sending via {sending_account.account_name}")
 
 

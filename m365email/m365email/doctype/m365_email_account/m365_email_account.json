@@ -12,8 +12,9 @@
   "email_address",
   "user",
   "service_principal",
-  "enabled",
-  "use_for_sending",
+  "enable_incoming",
+  "enable_outgoing",
+  "default_outgoing",
   "always_use_account_email_as_sender",
   "footer",
   "column_break_1",
@@ -68,27 +69,36 @@
   },
   {
    "default": "0",
-   "fieldname": "enabled",
+   "description": "Enable syncing incoming emails from M365 to Frappe (requires Mail.Read permission)",
+   "fieldname": "enable_incoming",
    "fieldtype": "Check",
-   "label": "Enabled"
+   "label": "Enable Incoming"
   },
   {
    "default": "0",
-   "description": "Use this account for sending emails via M365 (requires Mail.Send permission)",
-   "fieldname": "use_for_sending",
+   "description": "Enable sending emails via M365 Graph API (requires Mail.Send permission)",
+   "fieldname": "enable_outgoing",
    "fieldtype": "Check",
-   "label": "Use for Sending"
+   "label": "Enable Outgoing"
   },
   {
    "default": "0",
-   "depends_on": "use_for_sending",
+   "depends_on": "enable_outgoing",
+   "description": "Use this account as the default fallback when sender email doesn't match any M365 account",
+   "fieldname": "default_outgoing",
+   "fieldtype": "Check",
+   "label": "Default Outgoing Account"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_outgoing",
    "description": "Always send emails using this account's email address, regardless of the sender specified",
    "fieldname": "always_use_account_email_as_sender",
    "fieldtype": "Check",
    "label": "Always Use Account Email as Sender"
   },
   {
-   "depends_on": "use_for_sending",
+   "depends_on": "enable_outgoing",
    "description": "Footer to be appended to all emails sent from this account",
    "fieldname": "footer",
    "fieldtype": "Text Editor",

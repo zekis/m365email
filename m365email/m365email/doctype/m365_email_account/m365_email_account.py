@@ -50,19 +50,23 @@ class M365EmailAccount(Document):
 					)
 				)
 
-		# Ensure only one account is marked for sending
-		if self.use_for_sending:
-			existing_sending_account = frappe.db.get_value(
+		# Validate default_outgoing requires enable_outgoing
+		if self.default_outgoing and not self.enable_outgoing:
+			frappe.throw(_("Default Outgoing Account requires Enable Outgoing to be checked"))
+
+		# Ensure only one account is marked as default_outgoing
+		if self.default_outgoing:
+			existing_default = frappe.db.get_value(
 				"M365 Email Account",
 				{
 					"name": ["!=", self.name],
-					"use_for_sending": 1
+					"default_outgoing": 1
 				}
 			)
-			if existing_sending_account:
+			if existing_default:
 				frappe.throw(
-					_("Account {0} is already marked for sending. Only one account can be used for sending.").format(
-						existing_sending_account
+					_("Account {0} is already marked as Default Outgoing. Only one account can be the default.").format(
+						existing_default
 					)
 				)
 
