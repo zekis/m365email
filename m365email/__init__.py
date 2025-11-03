@@ -33,12 +33,30 @@ def patch_email_account():
 			from m365email.m365email.send import can_send_via_m365
 
 			if can_send_via_m365():
+				# If no match_by_email provided, try to get default M365 account
+				email_id = match_by_email
+				account_name = "M365 Virtual Account"
+
+				if not email_id:
+					# Look up default outgoing M365 account
+					default_account = frappe.db.get_value(
+						"M365 Email Account",
+						{"default_outgoing": 1, "enable_outgoing": 1},
+						["email_address", "account_name"],
+						as_dict=True
+					)
+					if default_account:
+						email_id = default_account.email_address
+						account_name = default_account.account_name
+					else:
+						email_id = "noreply@m365.local"
+
 				# Return a minimal mock object that satisfies validation
 				# This won't be used for actual sending - M365 will handle it
 				class M365DummyAccount:
-					def __init__(self):
-						self.name = "M365 Virtual Account"
-						self.email_id = match_by_email or "noreply@m365.local"
+					def __init__(self, name, email):
+						self.name = name
+						self.email_id = email
 						self.footer = None
 						self.enable_auto_reply = 0
 						self.send_unsubscribe_message = 0
@@ -60,13 +78,18 @@ def patch_email_account():
 						self.ascii_encode_password = 0
 						self.always_bcc = None
 
+					@property
+					def default_sender(self):
+						import email.utils
+						return email.utils.formataddr((self.name, self.email_id))
+
 					def is_exists_in_db(self):
 						return False
 
 					def get(self, key, default=None):
 						return getattr(self, key, default)
 
-				return M365DummyAccount()
+				return M365DummyAccount(account_name, email_id)
 		except Exception:
 			pass
 
