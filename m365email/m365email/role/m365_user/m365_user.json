@@ -1,0 +1,15 @@
+{
+ "creation": "2025-01-24 12:00:00.000000",
+ "doctype": "Role",
+ "modified": "2025-01-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "M365 User",
+ "owner": "Administrator",
+ "role_name": "M365 User",
+ "desk_access": 1,
+ "disabled": 0,
+ "is_custom": 0,
+ "restrict_to_domain": "",
+ "two_factor_auth": 0
+}
+

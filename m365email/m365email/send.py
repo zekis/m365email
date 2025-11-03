@@ -13,10 +13,94 @@ from m365email.m365email.auth import get_access_token
 from m365email.m365email.graph_api import send_email_as_user
 
 
+def auto_provision_m365_account(sender_email):
+	"""
+	Auto-provision M365 Email Account for eligible users
+
+	Eligibility criteria:
+	- User has 'M365 User' role
+	- User's email domain matches a Service Principal's domain
+	- Service Principal has auto-provisioning enabled
+
+	Args:
+		sender_email: Email address of the sender
+
+	Returns:
+		M365EmailAccount doc if auto-provisioned, None otherwise
+	"""
+	try:
+		# Get the user from email
+		user = frappe.db.get_value("User", {"email": sender_email}, "name")
+		if not user:
+			return None
+
+		# Check if user has M365 User role
+		if not frappe.db.exists("Has Role", {"parent": user, "role": "M365 User"}):
+			return None
+
+		# Extract domain from email
+		if '@' not in sender_email:
+			return None
+		domain = sender_email.split('@')[1].lower()
+
+		# Find a Service Principal with matching domain and auto-provisioning enabled
+		service_principals = frappe.get_all(
+			"M365 Email Service Principal Settings",
+			filters={
+				"enabled": 1,
+				"enable_auto_provision": 1,
+				"domain": domain
+			},
+			limit=1
+		)
+
+		if not service_principals:
+			return None
+
+		sp_doc = frappe.get_doc("M365 Email Service Principal Settings", service_principals[0].name)
+
+		# Get user's full name
+		user_doc = frappe.get_doc("User", user)
+		user_full_name = user_doc.full_name or user_doc.first_name or user
+
+		# Prepare footer with replaced placeholder
+		footer = ""
+		if sp_doc.default_footer:
+			footer = sp_doc.default_footer.replace("<!--Sender-->", user_full_name)
+
+		# Create M365 Email Account
+		account = frappe.get_doc({
+			"doctype": "M365 Email Account",
+			"account_name": f"{user_full_name} ({sender_email})",
+			"account_type": "User Mailbox",
+			"email_address": sender_email,
+			"user": user,
+			"service_principal": sp_doc.name,
+			"enable_incoming": 0,  # Only enable outgoing by default
+			"enable_outgoing": 1,
+			"default_outgoing": 0,
+			"footer": footer
+		})
+
+		account.insert(ignore_permissions=True)
+		frappe.db.commit()
+
+		print(f"M365 Email: Auto-provisioned account for {sender_email} using Service Principal {sp_doc.name}")
+
+		return account
+
+	except Exception as e:
+		frappe.log_error(
+			title=f"M365 Auto-Provision Failed: {sender_email}",
+			message=f"Error: {str(e)}\n\nTraceback: {frappe.get_traceback()}"
+		)
+		return None
+
+
 def get_sending_account_for_sender(sender_email):
 	"""
 	Get the M365 Email Account for a specific sender email
-	First tries to match sender email, then falls back to default outgoing account
+	First tries to match sender email, then auto-provisions if eligible, then falls back to default outgoing account
 
 	Args:
 		sender_email: Email address of the sender
@@ -40,6 +124,12 @@ def get_sending_account_for_sender(sender_email):
 		if account_name:
 			print(f"M365 Email: Found matching account for sender {sender_email}")
 			return frappe.get_doc("M365 Email Account", account_name), True
+
+		# Try auto-provisioning if no account found
+		auto_provisioned_account = auto_provision_m365_account(sender_email)
+		if auto_provisioned_account:
+			print(f"M365 Email: Auto-provisioned account for sender {sender_email}")
+			return auto_provisioned_account, True
 
 	# Fall back to default outgoing account
 	account_name = frappe.db.get_value(
