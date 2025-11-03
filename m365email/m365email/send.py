@@ -238,8 +238,8 @@ class M365SendContext:
 				reference_doctype=self.queue_doc.reference_doctype,
 				reference_name=self.queue_doc.reference_name,
 				email=recipient_email,
-				unsubscribe_method=self.queue_doc.unsubscribe_method,
-				unsubscribe_params=self.queue_doc.unsubscribe_param,
+				unsubscribe_method=self.queue_doc.get("unsubscribe_method"),
+				unsubscribe_params=self.queue_doc.get("unsubscribe_param"),
 			)
 			unsubscribe_str = quopri.encodestring(unsubscribe_url.encode()).decode()
 			message = message.replace("<!--unsubscribe_url-->", unsubscribe_str)
@@ -262,13 +262,13 @@ class M365SendContext:
 
 		# Replace CC message placeholder
 		cc_message = ""
-		if self.queue_doc.expose_recipients == "footer":
+		if self.queue_doc.get("expose_recipients") == "footer":
 			# Get TO recipients from recipients child table
 			to_list = [r.recipient for r in self.queue_doc.recipients if r.recipient]
 			to_str = ", ".join(to_list) if to_list else ""
 
 			# Get CC from show_as_cc field
-			cc_str = self.queue_doc.show_as_cc or ""
+			cc_str = self.queue_doc.get("show_as_cc") or ""
 
 			if to_str:
 				cc_message = f"This email was sent to {to_str}"
@@ -276,7 +276,7 @@ class M365SendContext:
 		message = message.replace("<!--cc_message-->", cc_message)
 
 		# Replace recipient placeholder
-		recipient_str = recipient_email if self.queue_doc.expose_recipients != "header" else ""
+		recipient_str = recipient_email if self.queue_doc.get("expose_recipients") != "header" else ""
 		message = message.replace("<!--recipient-->", recipient_str)
 
 		# Append footer if configured
@@ -385,9 +385,9 @@ class M365SendContext:
 
 			# Get CC list (if any)
 			cc = None
-			if hasattr(self.queue_doc, 'show_as_cc') and self.queue_doc.show_as_cc:
-				if isinstance(self.queue_doc.show_as_cc, str):
-					cc = [r.strip() for r in self.queue_doc.show_as_cc.split(",") if r.strip()]
+			show_as_cc = self.queue_doc.get('show_as_cc')
+			if show_as_cc and isinstance(show_as_cc, str):
+				cc = [r.strip() for r in show_as_cc.split(",") if r.strip()]
 
 			# Send via Graph API to this single recipient
 			result = send_email_as_user(
