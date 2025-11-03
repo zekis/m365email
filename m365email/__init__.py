@@ -58,6 +58,7 @@ def patch_email_account():
 						self.login_id = None
 						self.password = None
 						self.ascii_encode_password = 0
+						self.always_bcc = None
 
 					def is_exists_in_db(self):
 						return False

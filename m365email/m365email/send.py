@@ -189,6 +189,32 @@ def send_via_m365(email_queue_doc):
 					attachments = []
 					for attachment in attachments_data:
 						try:
+							# Handle print format attachments (Attach Document Print)
+							if attachment.get('print_format_attachment') == 1:
+								# Make a copy and remove the print_format_attachment flag
+								# (frappe.attach_print doesn't accept this parameter)
+								attachment_copy = attachment.copy()
+								attachment_copy.pop('print_format_attachment', None)
+
+								# Convert print_letterhead from string to boolean if needed
+								if 'print_letterhead' in attachment_copy:
+									print_letterhead = attachment_copy['print_letterhead']
+									if isinstance(print_letterhead, str):
+										attachment_copy['print_letterhead'] = print_letterhead == '1' or print_letterhead.lower() == 'true'
+
+								# Generate PDF from print format
+								print_format_file = frappe.attach_print(**attachment_copy)
+
+								# Encode to base64
+								base64_content = base64.b64encode(print_format_file['fcontent']).decode('utf-8')
+
+								attachments.append({
+									"name": print_format_file['fname'],
+									"content": base64_content
+								})
+								continue
+
+							# Handle regular file attachments
 							# Get file identifier - could be file_url (File name) or fid
 							file_identifier = attachment.get('file_url') or attachment.get('fid')
 							if not file_identifier:
