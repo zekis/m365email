@@ -143,6 +143,11 @@ doc_events = {
 	}
 }
 
+# Override Email Queue send method to skip SMTP for M365 emails
+override_doctype_class = {
+	"Email Queue": "m365email.m365email.email_queue_override.M365EmailQueue"
+}
+
 # Scheduled Tasks
 # ---------------
 

@@ -90,6 +90,13 @@ def patch_email_account():
 						import email.utils
 						return email.utils.formataddr((self.name, self.email_id))
 
+					def get_smtp_server(self):
+						"""M365 doesn't use SMTP - emails are sent via Graph API"""
+						frappe.throw(
+							"M365 Email Account does not use SMTP. Emails should be sent via M365 Graph API.",
+							frappe.OutgoingEmailError
+						)
+
 					def is_exists_in_db(self):
 						return False
 
