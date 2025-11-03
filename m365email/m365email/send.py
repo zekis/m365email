@@ -97,19 +97,19 @@ def intercept_email_queue(doc, method=None):
 
 def send_via_m365(email_queue_doc):
 	"""
-	Send an email via M365 Graph API
+	Send emails via M365 Graph API to each recipient individually
+	This mimics Frappe's standard Email Queue behavior:
+	- Sends separate email to each recipient (privacy)
+	- Personalizes message with unsubscribe links, tracking, etc.
+	- Updates individual recipient status
 
 	Args:
 		email_queue_doc: Email Queue document
 
 	Returns:
-		bool: True if sent successfully
+		bool: True if sent successfully to at least one recipient
 	"""
 	try:
-		import email
-		from email import policy
-		from email.utils import parseaddr
-
 		# Get the sending account
 		sending_account = frappe.get_doc("M365 Email Account", email_queue_doc.m365_account)
 
@@ -123,16 +123,92 @@ def send_via_m365(email_queue_doc):
 			)
 			return False
 
-		# Parse the MIME message to extract subject and body
-		msg = email.message_from_string(email_queue_doc.message, policy=policy.default)
+		# Create M365 send context helper
+		ctx = M365SendContext(email_queue_doc, sending_account, access_token)
 
-		# Extract subject
-		subject = msg.get('Subject', 'No Subject')
+		# Track if we sent to at least one recipient
+		sent_to_at_least_one = False
 
-		# Extract HTML body
+		# Send to each recipient individually
+		for recipient in email_queue_doc.recipients:
+			# Skip if already sent
+			if recipient.is_mail_sent():
+				continue
+
+			try:
+				# Send to this recipient
+				if ctx.send_to_recipient(recipient):
+					# Update recipient status
+					recipient.update_db(status="Sent", commit=True)
+					sent_to_at_least_one = True
+					print(f"M365 Email: Sent to {recipient.recipient}")
+				else:
+					# Mark as error
+					recipient.update_db(status="Not Sent", error="Failed to send via M365", commit=True)
+					print(f"M365 Email: Failed to send to {recipient.recipient}")
+			except Exception as e:
+				# Log error for this recipient but continue with others
+				recipient.update_db(status="Not Sent", error=str(e), commit=True)
+				frappe.log_error(
+					title=f"M365 Email: Failed to send to {recipient.recipient}",
+					message=f"Email Queue: {email_queue_doc.name}\nRecipient: {recipient.recipient}\nError: {str(e)}"
+				)
+				print(f"M365 Email: Exception sending to {recipient.recipient}: {str(e)}")
+
+		# Update Communication if linked and we sent to at least one recipient
+		if sent_to_at_least_one and email_queue_doc.communication:
+			comm = frappe.get_doc("Communication", email_queue_doc.communication)
+			comm.db_set("sent_or_received", "Sent")
+			comm.db_set("delivery_status", "Sent")
+
+		return sent_to_at_least_one
+
+	except Exception as e:
+		frappe.log_error(
+			title="M365 Email Send Exception",
+			message=f"Email: {email_queue_doc.name}\n\nError: {str(e)}"
+		)
+		return False
+
+
+class M365SendContext:
+	"""
+	Helper class for building and sending personalized M365 emails
+	Similar to Frappe's SendMailContext but for M365 Graph API
+	"""
+
+	def __init__(self, queue_doc, sending_account, access_token):
+		self.queue_doc = queue_doc
+		self.sending_account = sending_account
+		self.access_token = access_token
+
+		# Parse the base MIME message once
+		import email
+		from email import policy
+		self.msg = email.message_from_string(queue_doc.message, policy=policy.default)
+		self.subject = self.msg.get('Subject', 'No Subject')
+
+		# Extract base body
+		self.base_body = self._extract_body()
+
+		# Parse sender
+		from email.utils import parseaddr
+		sender_email = getattr(queue_doc, 'sender', None) or frappe.session.user
+		if sender_email:
+			_, sender_email = parseaddr(sender_email)
+
+		# Override sender if using default account
+		if sender_email != sending_account.email_address:
+			print(f"M365 Email: Overriding sender from {sender_email} to {sending_account.email_address}")
+			sender_email = sending_account.email_address
+
+		self.sender_email = sender_email
+
+	def _extract_body(self):
+		"""Extract HTML or text body from MIME message"""
 		body = None
-		if msg.is_multipart():
-			for part in msg.walk():
+		if self.msg.is_multipart():
+			for part in self.msg.walk():
 				content_type = part.get_content_type()
 				if content_type == 'text/html':
 					body = part.get_content()
@@ -140,48 +216,88 @@ def send_via_m365(email_queue_doc):
 				elif content_type == 'text/plain' and not body:
 					body = part.get_content()
 		else:
-			body = msg.get_content()
+			body = self.msg.get_content()
 
-		if not body:
-			body = "No content"
+		return body or "No content"
+
+	def build_message_for_recipient(self, recipient_email):
+		"""
+		Build personalized message for a specific recipient
+		Replaces placeholders like <!--unsubscribe_url-->, <!--email_open_check-->, etc.
+		"""
+		import quopri
+		from frappe.utils import get_url
+		from frappe.utils.verified_command import get_signed_params
+		from frappe.email.queue import get_unsubcribed_url
+
+		message = self.base_body
+
+		# Replace unsubscribe URL placeholder
+		if self.queue_doc.add_unsubscribe_link and self.queue_doc.reference_doctype:
+			unsubscribe_url = get_unsubcribed_url(
+				reference_doctype=self.queue_doc.reference_doctype,
+				reference_name=self.queue_doc.reference_name,
+				email=recipient_email,
+				unsubscribe_method=self.queue_doc.unsubscribe_method,
+				unsubscribe_params=self.queue_doc.unsubscribe_param,
+			)
+			unsubscribe_str = quopri.encodestring(unsubscribe_url.encode()).decode()
+			message = message.replace("<!--unsubscribe_url-->", unsubscribe_str)
+		else:
+			# Remove placeholder if no unsubscribe link
+			message = message.replace("<!--unsubscribe_url-->", "")
+
+		# Replace email tracking pixel placeholder
+		tracker_url = ""
+		if self.queue_doc.get("email_read_tracker_url"):
+			params = {
+				"recipient_email": recipient_email,
+				"reference_name": self.queue_doc.reference_name,
+				"reference_doctype": self.queue_doc.reference_doctype,
+			}
+			tracker_url = get_url(f"{self.queue_doc.email_read_tracker_url}?{get_signed_params(params)}")
+		elif self.queue_doc.communication:
+			tracker_url = f"{get_url()}/api/method/frappe.core.doctype.communication.email.mark_email_as_seen?name={self.queue_doc.communication}"
+
+		if tracker_url:
+			tracker_html = f'<img src="{tracker_url}"/>'
+			tracker_str = quopri.encodestring(tracker_html.encode()).decode()
+			message = message.replace("<!--email_open_check-->", tracker_str)
+		else:
+			message = message.replace("<!--email_open_check-->", "")
+
+		# Replace CC message placeholder
+		cc_message = ""
+		if self.queue_doc.expose_recipients == "footer":
+			to_str = ", ".join(self.queue_doc.to)
+			cc_str = ", ".join(self.queue_doc.cc)
+			cc_message = f"This email was sent to {to_str}"
+			cc_message = f"{cc_message} and copied to {cc_str}" if cc_str else cc_message
+		message = message.replace("<!--cc_message-->", cc_message)
+
+		# Replace recipient placeholder
+		recipient_str = recipient_email if self.queue_doc.expose_recipients != "header" else ""
+		message = message.replace("<!--recipient-->", recipient_str)
 
 		# Append footer if configured
-		if sending_account.footer:
-			# Add footer with proper HTML formatting
+		if self.sending_account.footer:
 			footer_html = f"""
 <div class="m365-email-footer" style="margin-top: 20px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
-{sending_account.footer}
+{self.sending_account.footer}
 </div>
 """
-			# Append footer to body
-			body = body + footer_html
+			message = message + footer_html
 
-		# Parse recipients - Email Queue stores recipients as child table
-		recipients = []
-		if hasattr(email_queue_doc, 'recipients') and email_queue_doc.recipients:
-			if isinstance(email_queue_doc.recipients, list):
-				# It's a child table - extract email addresses
-				recipients = [r.recipient for r in email_queue_doc.recipients if r.recipient]
-			else:
-				# It's a string - split by comma
-				recipients = [r.strip() for r in email_queue_doc.recipients.split(",") if r.strip()]
+		return message
 
-		# Parse CC - stored as comma-separated string
-		cc = None
-		if hasattr(email_queue_doc, 'show_as_cc') and email_queue_doc.show_as_cc:
-			if isinstance(email_queue_doc.show_as_cc, str):
-				cc = [r.strip() for r in email_queue_doc.show_as_cc.split(",") if r.strip()]
-
-		# BCC is not stored in Email Queue
-		bcc = None
-		
-		# Get attachments - Email Queue stores attachments as JSON string
+	def get_attachments(self):
+		"""Get attachments from Email Queue"""
 		attachments = None
-		if hasattr(email_queue_doc, 'attachments') and email_queue_doc.attachments:
+		if hasattr(self.queue_doc, 'attachments') and self.queue_doc.attachments:
 			try:
 				import json
 				# Parse attachments JSON
-				attachments_data = email_queue_doc.attachments
+				attachments_data = self.queue_doc.attachments
 				if isinstance(attachments_data, str):
 					attachments_data = json.loads(attachments_data)
 
@@ -191,21 +307,15 @@ def send_via_m365(email_queue_doc):
 						try:
 							# Handle print format attachments (Attach Document Print)
 							if attachment.get('print_format_attachment') == 1:
-								# Make a copy and remove the print_format_attachment flag
-								# (frappe.attach_print doesn't accept this parameter)
 								attachment_copy = attachment.copy()
 								attachment_copy.pop('print_format_attachment', None)
 
-								# Convert print_letterhead from string to boolean if needed
 								if 'print_letterhead' in attachment_copy:
 									print_letterhead = attachment_copy['print_letterhead']
 									if isinstance(print_letterhead, str):
 										attachment_copy['print_letterhead'] = print_letterhead == '1' or print_letterhead.lower() == 'true'
 
-								# Generate PDF from print format
 								print_format_file = frappe.attach_print(**attachment_copy)
-
-								# Encode to base64
 								base64_content = base64.b64encode(print_format_file['fcontent']).decode('utf-8')
 
 								attachments.append({
@@ -215,18 +325,14 @@ def send_via_m365(email_queue_doc):
 								continue
 
 							# Handle regular file attachments
-							# Get file identifier - could be file_url (File name) or fid
 							file_identifier = attachment.get('file_url') or attachment.get('fid')
 							if not file_identifier:
 								continue
 
-							# Try to get File document - file_url might be the File name or actual URL
 							file_doc = None
 							try:
-								# First try as File name
 								file_doc = frappe.get_doc("File", file_identifier)
 							except frappe.DoesNotExistError:
-								# Try to find by file_url field
 								file_list = frappe.get_all("File", filters={"file_url": file_identifier}, limit=1)
 								if file_list:
 									file_doc = frappe.get_doc("File", file_list[0].name)
@@ -234,14 +340,11 @@ def send_via_m365(email_queue_doc):
 							if not file_doc:
 								frappe.log_error(
 									title="M365 Email: Attachment Not Found",
-									message=f"Email: {email_queue_doc.name}\nFile identifier: {file_identifier}\nAttachment: {attachment}"
+									message=f"Email: {self.queue_doc.name}\nFile identifier: {file_identifier}"
 								)
 								continue
 
-							# Get file content
 							file_content = file_doc.get_content()
-
-							# Encode to base64
 							base64_content = base64.b64encode(file_content).decode('utf-8')
 
 							attachments.append({
@@ -251,77 +354,62 @@ def send_via_m365(email_queue_doc):
 						except Exception as attach_error:
 							frappe.log_error(
 								title="M365 Email: Single Attachment Failed",
-								message=f"Email: {email_queue_doc.name}\nAttachment: {attachment}\nError: {str(attach_error)}"
+								message=f"Email: {self.queue_doc.name}\nAttachment: {attachment}\nError: {str(attach_error)}"
 							)
-							# Continue with other attachments
 							continue
 			except Exception as e:
 				frappe.log_error(
 					title="M365 Email: Attachment Processing Failed",
-					message=f"Email: {email_queue_doc.name}\nError: {str(e)}\nTraceback: {frappe.get_traceback()}"
+					message=f"Email: {self.queue_doc.name}\nError: {str(e)}"
 				)
-				# Continue without attachments rather than failing the whole email
 				attachments = None
 
-		# Determine sender email
-		sender_email = getattr(email_queue_doc, 'sender', None) or frappe.session.user
+		return attachments
 
-		# Parse email address from "Name <email>" format
-		if sender_email:
-			sender_name, sender_email = parseaddr(sender_email)
+	def send_to_recipient(self, recipient):
+		"""
+		Send email to a single recipient
 
-		# Check if this account was matched or is the default fallback
-		# If sender doesn't match the account email, we're using default fallback
-		# In that case, override sender to the account's email
-		if sender_email != sending_account.email_address:
-			print(f"M365 Email: Overriding sender from {sender_email} to {sending_account.email_address} (using default account)")
-			sender_email = sending_account.email_address
+		Args:
+			recipient: Email Queue Recipient object
 
-		# Validate sender email
-		if not sender_email or '@' not in sender_email:
+		Returns:
+			bool: True if sent successfully
+		"""
+		try:
+			# Build personalized message for this recipient
+			body = self.build_message_for_recipient(recipient.recipient)
+
+			# Get attachments (same for all recipients)
+			attachments = self.get_attachments()
+
+			# Get CC list (if any)
+			cc = None
+			if hasattr(self.queue_doc, 'show_as_cc') and self.queue_doc.show_as_cc:
+				if isinstance(self.queue_doc.show_as_cc, str):
+					cc = [r.strip() for r in self.queue_doc.show_as_cc.split(",") if r.strip()]
+
+			# Send via Graph API to this single recipient
+			result = send_email_as_user(
+				sender_email=self.sender_email,
+				recipients=[recipient.recipient],  # Single recipient
+				subject=self.subject,
+				body=body,
+				access_token=self.access_token,
+				cc=cc,
+				bcc=None,  # BCC not stored in Email Queue
+				attachments=attachments,
+				is_html=True
+			)
+
+			return result.get("success", False)
+
+		except Exception as e:
 			frappe.log_error(
-				title="M365 Email Send Failed: Invalid Sender",
-				message=f"Email: {email_queue_doc.name}\nSender: {sender_email}"
+				title=f"M365 Email: Failed to send to {recipient.recipient}",
+				message=f"Email Queue: {self.queue_doc.name}\nError: {str(e)}"
 			)
 			return False
-
-		# Send email via Graph API
-		result = send_email_as_user(
-			sender_email=sender_email,
-			recipients=recipients,
-			subject=subject,
-			body=body,
-			access_token=access_token,
-			cc=cc,
-			bcc=bcc,
-			attachments=attachments,
-			is_html=True
-		)
-		
-		if result.get("success"):
-			print(f"M365 Email: Successfully sent email '{email_queue_doc.name}' from {sender_email}")
-			
-			# Update Communication if linked
-			if email_queue_doc.communication:
-				comm = frappe.get_doc("Communication", email_queue_doc.communication)
-				comm.db_set("sent_or_received", "Sent")
-				comm.db_set("delivery_status", "Sent")
-			
-			return True
-		else:
-			error_msg = result.get("message", "Unknown error")
-			frappe.log_error(
-				title="M365 Email Send Failed",
-				message=f"Email: {email_queue_doc.name}\nSender: {sender_email}\nError: {error_msg}"
-			)
-			return False
-			
-	except Exception as e:
-		frappe.log_error(
-			title="M365 Email Send Exception",
-			message=f"Email: {email_queue_doc.name}\n\nError: {str(e)}"
-		)
-		return False
 
 
 def process_email_queue_m365():
