@@ -77,6 +77,13 @@ def patch_email_account():
 						self.password = None
 						self.ascii_encode_password = 0
 						self.always_bcc = None
+						self.service = ""
+						self.domain = None
+						self.auth_method = "Basic"
+						self.no_smtp_authentication = 0
+						self.use_ssl_for_outgoing = 0
+						self.awaiting_password = 0
+						self.email_account_name = name
 
 					@property
 					def default_sender(self):
