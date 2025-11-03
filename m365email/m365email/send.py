@@ -249,14 +249,8 @@ class M365SendContext:
 
 		# Replace email tracking pixel placeholder
 		tracker_url = ""
-		if self.queue_doc.get("email_read_tracker_url"):
-			params = {
-				"recipient_email": recipient_email,
-				"reference_name": self.queue_doc.reference_name,
-				"reference_doctype": self.queue_doc.reference_doctype,
-			}
-			tracker_url = get_url(f"{self.queue_doc.email_read_tracker_url}?{get_signed_params(params)}")
-		elif self.queue_doc.communication:
+		if self.queue_doc.communication:
+			# Use communication-based email tracking
 			tracker_url = f"{get_url()}/api/method/frappe.core.doctype.communication.email.mark_email_as_seen?name={self.queue_doc.communication}"
 
 		if tracker_url:
@@ -269,10 +263,16 @@ class M365SendContext:
 		# Replace CC message placeholder
 		cc_message = ""
 		if self.queue_doc.expose_recipients == "footer":
-			to_str = ", ".join(self.queue_doc.to)
-			cc_str = ", ".join(self.queue_doc.cc)
-			cc_message = f"This email was sent to {to_str}"
-			cc_message = f"{cc_message} and copied to {cc_str}" if cc_str else cc_message
+			# Get TO recipients from recipients child table
+			to_list = [r.recipient for r in self.queue_doc.recipients if r.recipient]
+			to_str = ", ".join(to_list) if to_list else ""
+
+			# Get CC from show_as_cc field
+			cc_str = self.queue_doc.show_as_cc or ""
+
+			if to_str:
+				cc_message = f"This email was sent to {to_str}"
+				cc_message = f"{cc_message} and copied to {cc_str}" if cc_str else cc_message
 		message = message.replace("<!--cc_message-->", cc_message)
 
 		# Replace recipient placeholder
